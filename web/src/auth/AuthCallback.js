@@ -20,6 +20,7 @@ import * as Util from "./Util";
 import {authConfig} from "./Auth";
 import * as Setting from "../Setting";
 import i18next from "i18next";
+import RedirectForm from "../common/RedirectForm";
 
 class AuthCallback extends React.Component {
   constructor(props) {
@@ -27,6 +28,9 @@ class AuthCallback extends React.Component {
     this.state = {
       classes: props,
       msg: null,
+      samlResponse: "",
+      relayState: "",
+      redirectUrl: "",
     };
   }
 
@@ -35,7 +39,7 @@ class AuthCallback extends React.Component {
     // realRedirectUrl = "http://localhost:9000"
     const params = new URLSearchParams(this.props.location.search);
     const state = params.get("state");
-    const queryString = Util.stateToGetQueryParams(state);
+    const queryString = Util.getQueryParamsFromState(state);
     return new URLSearchParams(queryString);
   }
 
@@ -50,8 +54,12 @@ class AuthCallback extends React.Component {
       // Casdoor's own login page, so "code" is not necessary
       if (realRedirectUri === null) {
         const samlRequest = innerParams.get("SAMLRequest");
+        // cas don't use 'redirect_url', it is called 'service'
+        const casService = innerParams.get("service");
         if (samlRequest !== null && samlRequest !== undefined && samlRequest !== "") {
-          return "saml"
+          return "saml";
+        } else if (casService !== null && casService !== undefined && casService !== "") {
+          return "cas";
         }
         return "login";
       }
@@ -64,7 +72,7 @@ class AuthCallback extends React.Component {
       } else {
         const responseType = innerParams.get("response_type");
         if (responseType !== null) {
-          return responseType
+          return responseType;
         }
         return "code";
       }
@@ -77,7 +85,7 @@ class AuthCallback extends React.Component {
 
   UNSAFE_componentWillMount() {
     const params = new URLSearchParams(this.props.location.search);
-    let isSteam = params.get("openid.mode")
+    const isSteam = params.get("openid.mode");
     let code = params.get("code");
     // WeCom returns "auth_code=xxx" instead of "code=xxx"
     if (code === null) {
@@ -85,11 +93,17 @@ class AuthCallback extends React.Component {
     }
     // Dingtalk now  returns "authCode=xxx" instead of "code=xxx"
     if (code === null) {
-      code = params.get("authCode")
+      code = params.get("authCode");
     }
-    //Steam don't use code, so we should use all params as code.
+    // The code for Web3 is the JSON-serialized string of Web3AuthToken
+    // Due to the limited length of URLs, we only pass the web3AuthTokenKey
+    if (code === null) {
+      code = params.get("web3AuthTokenKey");
+      code = localStorage.getItem(code);
+    }
+    // Steam don't use code, so we should use all params as code.
     if (isSteam !== null && code === null) {
-      code = this.props.location.search
+      code = this.props.location.search;
     }
 
     const innerParams = this.getInnerParams();
@@ -97,8 +111,9 @@ class AuthCallback extends React.Component {
     const providerName = innerParams.get("provider");
     const method = innerParams.get("method");
     const samlRequest = innerParams.get("SAMLRequest");
+    const casService = innerParams.get("service");
 
-    let redirectUri = `${window.location.origin}/callback`;
+    const redirectUri = `${window.location.origin}/callback`;
 
     const body = {
       type: this.getResponseType(),
@@ -111,32 +126,86 @@ class AuthCallback extends React.Component {
       redirectUri: redirectUri,
       method: method,
     };
+
+    if (this.getResponseType() === "cas") {
+      // user is using casdoor as cas sso server, and wants the ticket to be acquired
+      AuthBackend.loginCas(body, {"service": casService}).then((res) => {
+        if (res.status === "ok") {
+          let msg = "Logged in successfully.";
+          if (casService === "") {
+            // If service was not specified, Casdoor must display a message notifying the client that it has successfully initiated a single sign-on session.
+            msg += "Now you can visit apps protected by Casdoor.";
+          }
+          Setting.showMessage("success", msg);
+
+          if (casService !== "") {
+            const st = res.data;
+            const newUrl = new URL(casService);
+            newUrl.searchParams.append("ticket", st);
+            window.location.href = newUrl.toString();
+          }
+        } else {
+          Setting.showMessage("error", `${i18next.t("application:Failed to sign in")}: ${res.msg}`);
+        }
+      });
+      return;
+    }
+    // OAuth
     const oAuthParams = Util.getOAuthGetParameters(innerParams);
-    const concatChar = oAuthParams?.redirectUri?.includes('?') ? '&' : '?';
+    const concatChar = oAuthParams?.redirectUri?.includes("?") ? "&" : "?";
+    const signinUrl = localStorage.getItem("signinUrl");
+
     AuthBackend.login(body, oAuthParams)
       .then((res) => {
-        if (res.status === 'ok') {
+        if (res.status === "ok") {
           const responseType = this.getResponseType();
           if (responseType === "login") {
-            Util.showMessage("success", `Logged in successfully`);
+            if (res.data2) {
+              sessionStorage.setItem("signinUrl", signinUrl);
+              Setting.goToLinkSoft(this, `/forget/${applicationName}`);
+              return;
+            }
+            Setting.showMessage("success", "Logged in successfully");
             // Setting.goToLinkSoft(this, "/");
-
             const link = Setting.getFromLink();
             Setting.goToLink(link);
           } else if (responseType === "code") {
+            if (res.data2) {
+              sessionStorage.setItem("signinUrl", signinUrl);
+              Setting.goToLinkSoft(this, `/forget/${applicationName}`);
+              return;
+            }
             const code = res.data;
             Setting.goToLink(`${oAuthParams.redirectUri}${concatChar}code=${code}&state=${oAuthParams.state}`);
-            // Util.showMessage("success", `Authorization code: ${res.data}`);
-          } else if (responseType === "token" || responseType === "id_token"){
+            // Setting.showMessage("success", `Authorization code: ${res.data}`);
+          } else if (responseType === "token" || responseType === "id_token") {
+            if (res.data2) {
+              sessionStorage.setItem("signinUrl", signinUrl);
+              Setting.goToLinkSoft(this, `/forget/${applicationName}`);
+              return;
+            }
             const token = res.data;
             Setting.goToLink(`${oAuthParams.redirectUri}${concatChar}${responseType}=${token}&state=${oAuthParams.state}&token_type=bearer`);
           } else if (responseType === "link") {
             const from = innerParams.get("from");
-            Setting.goToLinkSoft(this, from);
+            Setting.goToLinkSoftOrJumpSelf(this, from);
           } else if (responseType === "saml") {
-            const SAMLResponse = res.data;
-            const redirectUri = res.data2;
-            Setting.goToLink(`${redirectUri}?SAMLResponse=${encodeURIComponent(SAMLResponse)}&RelayState=${oAuthParams.relayState}`);
+            if (res.data2.method === "POST") {
+              this.setState({
+                samlResponse: res.data,
+                redirectUrl: res.data2.redirectUrl,
+                relayState: oAuthParams.relayState,
+              });
+            } else {
+              if (res.data2.needUpdatePassword) {
+                sessionStorage.setItem("signinUrl", signinUrl);
+                Setting.goToLinkSoft(this, `/forget/${applicationName}`);
+                return;
+              }
+              const SAMLResponse = res.data;
+              const redirectUri = res.data2.redirectUrl;
+              Setting.goToLink(`${redirectUri}?SAMLResponse=${encodeURIComponent(SAMLResponse)}&RelayState=${oAuthParams.relayState}`);
+            }
           }
         } else {
           this.setState({
@@ -147,8 +216,12 @@ class AuthCallback extends React.Component {
   }
 
   render() {
+    if (this.state.samlResponse !== "") {
+      return <RedirectForm samlResponse={this.state.samlResponse} redirectUrl={this.state.redirectUrl} relayState={this.state.relayState} />;
+    }
+
     return (
-      <div style={{textAlign: "center"}}>
+      <div style={{display: "flex", justifyContent: "center", alignItems: "center"}}>
         {
           (this.state.msg === null) ? (
             <Spin size="large" tip={i18next.t("login:Signing in...")} style={{paddingTop: "10%"}} />
@@ -157,7 +230,7 @@ class AuthCallback extends React.Component {
           )
         }
       </div>
-    )
+    );
   }
 }
 
