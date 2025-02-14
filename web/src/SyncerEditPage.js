@@ -13,30 +13,30 @@
 // limitations under the License.
 
 import React from "react";
-import {Button, Card, Col, Input, InputNumber, Row, Select, Switch} from 'antd';
+import {Button, Card, Col, Input, InputNumber, Radio, Row, Select, Switch} from "antd";
 import {LinkOutlined} from "@ant-design/icons";
 import * as SyncerBackend from "./backend/SyncerBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as Setting from "./Setting";
 import i18next from "i18next";
-import SyncerTableColumnTable from "./SyncerTableColumnTable";
+import SyncerTableColumnTable from "./table/SyncerTableColumnTable";
 
-import {Controlled as CodeMirror} from 'react-codemirror2';
-import "codemirror/lib/codemirror.css";
-require('codemirror/theme/material-darker.css');
-require("codemirror/mode/javascript/javascript");
+import * as CertBackend from "./backend/CertBackend";
+import Editor from "./common/Editor";
 
-const { Option } = Select;
+const {Option} = Select;
 
 class SyncerEditPage extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
+      certs: [],
       classes: props,
       syncerName: props.match.params.syncerName,
       syncer: null,
       organizations: [],
       mode: props.location.mode !== undefined ? props.location.mode : "edit",
+      testDbLoading: false,
     };
   }
 
@@ -47,9 +47,28 @@ class SyncerEditPage extends React.Component {
 
   getSyncer() {
     SyncerBackend.getSyncer("admin", this.state.syncerName)
-      .then((syncer) => {
+      .then((res) => {
+        if (res.data === null) {
+          this.props.history.push("/404");
+          return;
+        }
+
+        if (res.status === "error") {
+          Setting.showMessage("error", res.msg);
+          return;
+        }
+
         this.setState({
-          syncer: syncer,
+          syncer: res.data,
+        });
+      });
+  }
+
+  getCerts(owner) {
+    CertBackend.getCerts(owner)
+      .then((res) => {
+        this.setState({
+          certs: res.data || [],
         });
       });
   }
@@ -58,8 +77,11 @@ class SyncerEditPage extends React.Component {
     OrganizationBackend.getOrganizations("admin")
       .then((res) => {
         this.setState({
-          organizations: (res.msg === undefined) ? res : [],
+          organizations: res.data || [],
         });
+        if (res.data) {
+          this.getCerts(`${res.data.owner}/${res.data.name}`);
+        }
       });
   }
 
@@ -73,11 +95,102 @@ class SyncerEditPage extends React.Component {
   updateSyncerField(key, value) {
     value = this.parseSyncerField(key, value);
 
-    let syncer = this.state.syncer;
+    const syncer = this.state.syncer;
     syncer[key] = value;
     this.setState({
       syncer: syncer,
     });
+  }
+
+  getSyncerTableColumns(syncer) {
+    switch (syncer.type) {
+    case "Keycloak":
+      return [
+        {
+          "name": "ID",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "USERNAME",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "LAST_NAME+FIRST_NAME",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "EMAIL",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "EMAIL_VERIFIED",
+          "type": "boolean",
+          "casdoorName": "EmailVerified",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "FIRST_NAME",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "LAST_NAME",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "CREATED_TIMESTAMP",
+          "type": "string",
+          "casdoorName": "CreatedTime",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+        {
+          "name": "ENABLED",
+          "type": "boolean",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [
+
+          ],
+        },
+      ];
+    default:
+      return [];
+    }
   }
 
   renderSyncer() {
@@ -86,242 +199,389 @@ class SyncerEditPage extends React.Component {
         <div>
           {this.state.mode === "add" ? i18next.t("syncer:New Syncer") : i18next.t("syncer:Edit Syncer")}&nbsp;&nbsp;&nbsp;&nbsp;
           <Button onClick={() => this.submitSyncerEdit(false)}>{i18next.t("general:Save")}</Button>
-          <Button style={{marginLeft: '20px'}} type="primary" onClick={() => this.submitSyncerEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
-          {this.state.mode === "add" ? <Button style={{marginLeft: '20px'}} onClick={() => this.deleteSyncer()}>{i18next.t("general:Cancel")}</Button> : null}
+          <Button style={{marginLeft: "20px"}} type="primary" onClick={() => this.submitSyncerEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
+          {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} onClick={() => this.deleteSyncer()}>{i18next.t("general:Cancel")}</Button> : null}
         </div>
-      } style={(Setting.isMobile())? {margin: '5px'}:{}} type="inner">
-        <Row style={{marginTop: '10px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+      } style={(Setting.isMobile()) ? {margin: "5px"} : {}} type="inner">
+        <Row style={{marginTop: "10px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("general:Organization"), i18next.t("general:Organization - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Select virtual={false} style={{width: '100%'}} value={this.state.syncer.organization} onChange={(value => {this.updateSyncerField('organization', value);})}>
+            <Select virtual={false} style={{width: "100%"}} disabled={!Setting.isAdminUser(this.props.account)} value={this.state.syncer.organization} onChange={(value => {this.updateSyncerField("organization", value);})}>
               {
                 this.state.organizations.map((organization, index) => <Option key={index} value={organization.name}>{organization.name}</Option>)
               }
             </Select>
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("general:Name"), i18next.t("general:Name - Tooltip"))} :
           </Col>
           <Col span={22} >
             <Input value={this.state.syncer.name} onChange={e => {
-              this.updateSyncerField('name', e.target.value);
+              this.updateSyncerField("name", e.target.value);
             }} />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("provider:Type"), i18next.t("provider:Type - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Select virtual={false} style={{width: '100%'}} value={this.state.syncer.type} onChange={(value => {
-              this.updateSyncerField('type', value);
-              this.state.syncer["tableColumns"] = Setting.getSyncerTableColumns(this.state.syncer);
-              this.state.syncer.table = value === "Keycloak" ? "user_entity" : this.state.syncer.table;
+            <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.type} onChange={(value => {
+              this.updateSyncerField("type", value);
+              const syncer = this.state.syncer;
+              syncer["tableColumns"] = this.getSyncerTableColumns(this.state.syncer);
+              syncer.table = (value === "Keycloak") ? "user_entity" : this.state.syncer.table;
+              this.setState({
+                syncer: syncer,
+              });
             })}>
               {
-                ['Database', 'LDAP', 'Keycloak']
+                ["Database", "Keycloak"]
                   .map((item, index) => <Option key={index} value={item}>{item}</Option>)
               }
             </Select>
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("provider:Host"), i18next.t("provider:Host - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.host} onChange={e => {
-              this.updateSyncerField('host', e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("provider:Port"), i18next.t("provider:Port - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <InputNumber value={this.state.syncer.port} onChange={value => {
-              this.updateSyncerField('port', value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("general:User"), i18next.t("general:User - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.user} onChange={e => {
-              this.updateSyncerField('user', e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("general:Password"), i18next.t("general:Password - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.password} onChange={e => {
-              this.updateSyncerField('password', e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Database type"), i18next.t("syncer:Database type - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Select virtual={false} style={{width: '100%'}} value={this.state.syncer.databaseType} onChange={(value => {this.updateSyncerField('databaseType', value);})}>
+            <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.databaseType} onChange={(value => {
+              this.updateSyncerField("databaseType", value);
+              if (value === "postgres") {
+                this.updateSyncerField("sslMode", "disable");
+              } else {
+                this.updateSyncerField("sslMode", "");
+              }
+            })}>
               {
                 [
-                  {id: 'mysql', name: 'MySQL'},
-                  {id: 'postgres', name: 'PostgreSQL'},
-                  {id: 'mssql', name: 'SQL Server'},
-                  {id: 'oracle', name: 'Oracle'},
-                  {id: 'sqlite3', name: 'Sqlite 3'},
-                ].map((databaseType, index) => <Option key={index} value={databaseType.id}>{databaseType.name}</Option>)
+                  {id: "mysql", name: "MySQL"},
+                  {id: "postgres", name: "PostgreSQL"},
+                  {id: "mssql", name: "SQL Server"},
+                  {id: "oracle", name: "Oracle"},
+                  {id: "sqlite3", name: "Sqlite 3"},
+                ].map((item, index) => <Option key={index} value={item.id}>{item.name}</Option>)
               }
             </Select>
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        {
+          this.state.syncer.databaseType !== "postgres" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(i18next.t("syncer:SSL mode"), i18next.t("syncer:SSL mode - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.sslMode} onChange={(value => {this.updateSyncerField("sslMode", value);})}>
+                  {
+                    [
+                      {id: "disable", name: "disable"},
+                      // {id: "allow", name: "allow"},
+                      // {id: "prefer", name: "prefer"},
+                      {id: "require", name: "require"},
+                      {id: "verify-ca", name: "verify-ca"},
+                      {id: "verify-full", name: "verify-full"},
+                    ].map((item, index) => <Option key={index} value={item.id}>{item.name}</Option>)
+                  }
+                </Select>
+              </Col>
+            </Row>
+          )
+        }
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("provider:Host"), i18next.t("provider:Host - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <Input prefix={<LinkOutlined />} value={this.state.syncer.host} onChange={e => {
+              this.updateSyncerField("host", e.target.value);
+            }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("provider:Port"), i18next.t("provider:Port - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <InputNumber value={this.state.syncer.port} onChange={value => {
+              this.updateSyncerField("port", value);
+            }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("general:User"), i18next.t("general:User - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <Input value={this.state.syncer.user} onChange={e => {
+              this.updateSyncerField("user", e.target.value);
+            }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("general:Password"), i18next.t("general:Password - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <Input.Password value={this.state.syncer.password} onChange={e => {
+              this.updateSyncerField("password", e.target.value);
+            }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Database"), i18next.t("syncer:Database - Tooltip"))} :
           </Col>
           <Col span={22} >
             <Input value={this.state.syncer.database} onChange={e => {
-              this.updateSyncerField('database', e.target.value);
+              this.updateSyncerField("database", e.target.value);
             }} />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        {
+          this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres" ? (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(i18next.t("general:SSH type"), i18next.t("general:SSH type - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <Radio.Group value={this.state.syncer.sshType} buttonStyle="solid" onChange={e => {
+                  this.updateSyncerField("sshType", e.target.value);
+                }}>
+                  <Radio.Button value="">{i18next.t("general:None")}</Radio.Button>
+                  <Radio.Button value="password">{i18next.t("general:Password")}</Radio.Button>
+                  <Radio.Button value="cert">{i18next.t("general:Cert")}</Radio.Button>
+                </Radio.Group>
+              </Col>
+            </Row>
+          ) : null
+        }
+        {
+          this.state.syncer.sshType && this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres" ? (
+            <React.Fragment>
+              <Row style={{marginTop: "20px"}} >
+                <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                  {Setting.getLabel(i18next.t("syncer:SSH host"), i18next.t("provider:Host - Tooltip"))} :
+                </Col>
+                <Col span={22} >
+                  <Input prefix={<LinkOutlined />} value={this.state.syncer.sshHost} onChange={e => {
+                    this.updateSyncerField("sshHost", e.target.value);
+                  }} />
+                </Col>
+              </Row>
+              <Row style={{marginTop: "20px"}} >
+                <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                  {Setting.getLabel(i18next.t("syncer:SSH port"), i18next.t("provider:Port - Tooltip"))} :
+                </Col>
+                <Col span={22} >
+                  <InputNumber value={this.state.syncer.sshPort} onChange={value => {
+                    this.updateSyncerField("sshPort", value);
+                  }} />
+                </Col>
+              </Row>
+              <Row style={{marginTop: "20px"}} >
+                <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                  {Setting.getLabel(i18next.t("syncer:SSH user"), i18next.t("general:User - Tooltip"))} :
+                </Col>
+                <Col span={22} >
+                  <Input value={this.state.syncer.sshUser} onChange={e => {
+                    this.updateSyncerField("sshUser", e.target.value);
+                  }} />
+                </Col>
+              </Row>
+              {
+                this.state.syncer.sshType === "password" && (this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres") ?
+                  (
+                    <Row style={{marginTop: "20px"}} >
+                      <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                        {Setting.getLabel(i18next.t("syncer:SSH password"), i18next.t("general:Password - Tooltip"))} :
+                      </Col>
+                      <Col span={22} >
+                        <Input.Password value={this.state.syncer.sshPassword} onChange={e => {
+                          this.updateSyncerField("ssh " + "sshPassword", e.target.value);
+                        }} />
+                      </Col>
+                    </Row>
+                  ) : (
+                    <Row style={{marginTop: "20px"}} >
+                      <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                        {Setting.getLabel(i18next.t("general:SSH cert"), i18next.t("general:Cert - Tooltip"))} :
+                      </Col>
+                      <Col span={22} >
+                        <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.cert} onChange={(value => {this.updateSyncerField("cert", value);})}>
+                          {
+                            this.state?.certs.map((cert, index) => <Option key={index} value={cert.name}>{cert.name}</Option>)
+                          }
+                        </Select>
+                      </Col>
+                    </Row>
+                  )
+              }
+            </React.Fragment>
+          ) : null
+        }
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Table"), i18next.t("syncer:Table - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Input value={this.state.syncer.table}
-                   disabled={this.state.syncer.type === "Keycloak"} onChange={e => {
-              this.updateSyncerField('table', e.target.value);
+            <Input value={this.state.syncer.table} onChange={e => {
+              this.updateSyncerField("table", e.target.value);
             }} />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("syncer:Table primary key"), i18next.t("syncer:Table primary key - Tooltip"))} :
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("provider:DB test"), i18next.t("provider:DB test - Tooltip"))} :
           </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.tablePrimaryKey} onChange={e => {
-              this.updateSyncerField('tablePrimaryKey', e.target.value);
-            }} />
+          <Col span={2} >
+            <Button type={"primary"} loading={this.state.testDbLoading} onClick={() => {
+              this.setState({testDbLoading: true});
+              SyncerBackend.testSyncerDb(this.state.syncer)
+                .then((res) => {
+                  if (res.status === "ok") {
+                    this.setState({testDbLoading: false});
+                    Setting.showMessage("success", i18next.t("syncer:Connect successfully"));
+                  } else {
+                    this.setState({testDbLoading: false});
+                    Setting.showMessage("error", `${i18next.t("syncer:Failed to connect")}: ${res.msg}`);
+                  }
+                })
+                .catch(error => {
+                  this.setState({testDbLoading: false});
+                  Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
+                });
+            }
+            }>{i18next.t("syncer:Test DB Connection")}</Button>
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Table columns"), i18next.t("syncer:Table columns - Tooltip"))} :
           </Col>
           <Col span={22} >
             <SyncerTableColumnTable
               title={i18next.t("syncer:Table columns")}
               table={this.state.syncer.tableColumns}
-              onUpdateTable={(value) => { this.updateSyncerField('tableColumns', value)}}
+              onUpdateTable={(value) => {this.updateSyncerField("tableColumns", value);}}
             />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Affiliation table"), i18next.t("syncer:Affiliation table - Tooltip"))} :
           </Col>
           <Col span={22} >
             <Input value={this.state.syncer.affiliationTable} onChange={e => {
-              this.updateSyncerField('affiliationTable', e.target.value);
+              this.updateSyncerField("affiliationTable", e.target.value);
             }} />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Avatar base URL"), i18next.t("syncer:Avatar base URL - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Input prefix={<LinkOutlined/>} value={this.state.syncer.avatarBaseUrl} onChange={e => {
-              this.updateSyncerField('avatarBaseUrl', e.target.value);
+            <Input prefix={<LinkOutlined />} value={this.state.syncer.avatarBaseUrl} onChange={e => {
+              this.updateSyncerField("avatarBaseUrl", e.target.value);
             }} />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Sync interval"), i18next.t("syncer:Sync interval - Tooltip"))} :
           </Col>
           <Col span={22} >
             <InputNumber value={this.state.syncer.syncInterval} onChange={value => {
-              this.updateSyncerField('syncInterval', value);
+              this.updateSyncerField("syncInterval", value);
             }} />
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 22 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("syncer:Error text"), i18next.t("syncer:Error text - Tooltip"))} :
           </Col>
           <Col span={22} >
             <div style={{width: "100%", height: "300px"}} >
-              <CodeMirror
+              <Editor
                 value={this.state.syncer.errorText}
-                options={{mode: 'javascript', theme: "material-darker"}}
-                onBeforeChange={(editor, data, value) => {
+                fillHeight
+                readOnly
+                dark
+                lang="js"
+                onChange={value => {
                   this.updateSyncerField("errorText", value);
                 }}
               />
             </div>
           </Col>
         </Row>
-        <Row style={{marginTop: '20px'}} >
-          <Col style={{marginTop: '5px'}} span={(Setting.isMobile()) ? 19 : 2}>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 19 : 2}>
+            {Setting.getLabel(i18next.t("syncer:Is read-only"), i18next.t("syncer:Is read-only - Tooltip"))} :
+          </Col>
+          <Col span={1} >
+            <Switch checked={this.state.syncer.isReadOnly} onChange={checked => {
+              this.updateSyncerField("isReadOnly", checked);
+            }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 19 : 2}>
             {Setting.getLabel(i18next.t("general:Is enabled"), i18next.t("general:Is enabled - Tooltip"))} :
           </Col>
           <Col span={1} >
             <Switch checked={this.state.syncer.isEnabled} onChange={checked => {
-              this.updateSyncerField('isEnabled', checked);
+              this.updateSyncerField("isEnabled", checked);
             }} />
           </Col>
         </Row>
       </Card>
-    )
+    );
   }
 
-  submitSyncerEdit(willExist) {
-    let syncer = Setting.deepCopy(this.state.syncer);
+  submitSyncerEdit(exitAfterSave) {
+    const syncer = Setting.deepCopy(this.state.syncer);
     SyncerBackend.updateSyncer(this.state.syncer.owner, this.state.syncerName, syncer)
       .then((res) => {
-        if (res.msg === "") {
-          Setting.showMessage("success", `Successfully saved`);
+        if (res.status === "ok") {
+          Setting.showMessage("success", i18next.t("general:Successfully saved"));
           this.setState({
             syncerName: this.state.syncer.name,
           });
 
-          if (willExist) {
-            this.props.history.push(`/syncers`);
+          if (exitAfterSave) {
+            this.props.history.push("/syncers");
           } else {
             this.props.history.push(`/syncers/${this.state.syncer.name}`);
           }
         } else {
-          Setting.showMessage("error", res.msg);
-          this.updateSyncerField('name', this.state.syncerName);
+          Setting.showMessage("error", `${i18next.t("general:Failed to save")}: ${res.msg}`);
+          this.updateSyncerField("name", this.state.syncerName);
         }
       })
       .catch(error => {
-        Setting.showMessage("error", `Failed to connect to server: ${error}`);
+        Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
       });
   }
 
   deleteSyncer() {
     SyncerBackend.deleteSyncer(this.state.syncer)
-      .then(() => {
-        this.props.history.push(`/syncers`);
+      .then((res) => {
+        if (res.status === "ok") {
+          this.props.history.push("/syncers");
+        } else {
+          Setting.showMessage("error", `${i18next.t("general:Failed to delete")}: ${res.msg}`);
+        }
       })
       .catch(error => {
-        Setting.showMessage("error", `Syncer failed to delete: ${error}`);
+        Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
       });
   }
 
@@ -331,10 +591,10 @@ class SyncerEditPage extends React.Component {
         {
           this.state.syncer !== null ? this.renderSyncer() : null
         }
-        <div style={{marginTop: '20px', marginLeft: '40px'}}>
+        <div style={{marginTop: "20px", marginLeft: "40px"}}>
           <Button size="large" onClick={() => this.submitSyncerEdit(false)}>{i18next.t("general:Save")}</Button>
-          <Button style={{marginLeft: '20px'}} type="primary" size="large" onClick={() => this.submitSyncerEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
-          {this.state.mode === "add" ? <Button style={{marginLeft: '20px'}} size="large" onClick={() => this.deleteSyncer()}>{i18next.t("general:Cancel")}</Button> : null}
+          <Button style={{marginLeft: "20px"}} type="primary" size="large" onClick={() => this.submitSyncerEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
+          {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} size="large" onClick={() => this.deleteSyncer()}>{i18next.t("general:Cancel")}</Button> : null}
         </div>
       </div>
     );

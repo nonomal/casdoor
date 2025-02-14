@@ -11,13 +11,14 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package conf
 
 import (
 	"os"
 	"testing"
 
-	"github.com/astaxie/beego"
+	"github.com/beego/beego"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -32,7 +33,7 @@ func TestGetConfString(t *testing.T) {
 		{"Should be return  value", "key", "value"},
 	}
 
-	//do some set up job
+	// do some set up job
 
 	os.Setenv("appname", "casbin")
 	os.Setenv("key", "value")
@@ -58,7 +59,7 @@ func TestGetConfInt(t *testing.T) {
 		{"Should be return 8000", "verificationCodeTimeout", 10},
 	}
 
-	//do some set up job
+	// do some set up job
 	os.Setenv("httpport", "8001")
 
 	err := beego.LoadAppConfig("ini", "app.conf")
@@ -79,20 +80,48 @@ func TestGetConfBool(t *testing.T) {
 		input       string
 		expected    interface{}
 	}{
-		{"Should be return false", "SessionOn", false},
 		{"Should be return false", "copyrequestbody", true},
 	}
-
-	//do some set up job
-	os.Setenv("SessionOn", "false")
 
 	err := beego.LoadAppConfig("ini", "app.conf")
 	assert.Nil(t, err)
 	for _, scenery := range scenarios {
 		t.Run(scenery.description, func(t *testing.T) {
-			actual, err := GetConfigBool(scenery.input)
+			actual := GetConfigBool(scenery.input)
 			assert.Nil(t, err)
 			assert.Equal(t, scenery.expected, actual)
 		})
+	}
+}
+
+func TestGetConfigQuota(t *testing.T) {
+	scenarios := []struct {
+		description string
+		expected    *Quota
+	}{
+		{"default", &Quota{-1, -1, -1, -1}},
+	}
+
+	err := beego.LoadAppConfig("ini", "app.conf")
+	assert.Nil(t, err)
+	for _, scenery := range scenarios {
+		quota := GetConfigQuota()
+		assert.Equal(t, scenery.expected, quota)
+	}
+}
+
+func TestGetConfigLogs(t *testing.T) {
+	scenarios := []struct {
+		description string
+		expected    string
+	}{
+		{"Default log config", `{"filename": "logs/casdoor.log", "maxdays":99999, "perm":"0770"}`},
+	}
+
+	err := beego.LoadAppConfig("ini", "app.conf")
+	assert.Nil(t, err)
+	for _, scenery := range scenarios {
+		quota := GetConfigString("logConfig")
+		assert.Equal(t, scenery.expected, quota)
 	}
 }

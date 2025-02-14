@@ -13,46 +13,101 @@
 // limitations under the License.
 
 import React from "react";
-import {Button, Descriptions, Spin} from "antd";
+import {Button, Descriptions, InputNumber, Space, Spin} from "antd";
 import i18next from "i18next";
 import * as ProductBackend from "./backend/ProductBackend";
-import * as ProviderBackend from "./backend/ProviderBackend";
-import * as Provider from "./auth/Provider";
+import * as PlanBackend from "./backend/PlanBackend";
+import * as PricingBackend from "./backend/PricingBackend";
 import * as Setting from "./Setting";
 
 class ProductBuyPage extends React.Component {
   constructor(props) {
     super(props);
+    const params = new URLSearchParams(window.location.search);
     this.state = {
       classes: props,
-      productName: props.match?.params.productName,
+      owner: props?.organizationName ?? props?.match?.params?.organizationName ?? props?.match?.params?.owner ?? null,
+      productName: props?.productName ?? props?.match?.params?.productName ?? null,
+      pricingName: props?.pricingName ?? props?.match?.params?.pricingName ?? null,
+      planName: params.get("plan"),
+      userName: params.get("user"),
+      paymentEnv: "",
       product: null,
-      providers: [],
+      pricing: props?.pricing ?? null,
+      plan: null,
       isPlacingOrder: false,
+      customPrice: 0,
     };
+  }
+
+  getPaymentEnv() {
+    let env = "";
+    const ua = navigator.userAgent.toLocaleLowerCase();
+    // Only support Wechat Pay in Wechat Browser for mobile devices
+    if (ua.indexOf("micromessenger") !== -1 && ua.indexOf("mobile") !== -1) {
+      env = "WechatBrowser";
+    }
+    this.setState({
+      paymentEnv: env,
+    });
   }
 
   UNSAFE_componentWillMount() {
     this.getProduct();
-    this.getPaymentProviders();
+    this.getPaymentEnv();
   }
 
-  getProduct() {
-    ProductBackend.getProduct("admin", this.state.productName)
-      .then((product) => {
-        this.setState({
-          product: product,
-        });
+  setStateAsync(state) {
+    return new Promise((resolve, reject) => {
+      this.setState(state, () => {
+        resolve();
       });
+    });
   }
 
-  getPaymentProviders() {
-    ProviderBackend.getProviders("admin")
-      .then((res) => {
-        this.setState({
-          providers: res.filter(provider => provider.category === "Payment"),
+  onUpdatePricing(pricing) {
+    this.props.onUpdatePricing(pricing);
+  }
+
+  async getProduct() {
+    if (!this.state.owner || (!this.state.productName && !this.state.pricingName)) {
+      return ;
+    }
+    try {
+      // load pricing & plan
+      if (this.state.pricingName) {
+        if (!this.state.planName || !this.state.userName) {
+          return ;
+        }
+        let res = await PricingBackend.getPricing(this.state.owner, this.state.pricingName);
+        if (res.status !== "ok") {
+          throw new Error(res.msg);
+        }
+        const pricing = res.data;
+        res = await PlanBackend.getPlan(this.state.owner, this.state.planName);
+        if (res.status !== "ok") {
+          throw new Error(res.msg);
+        }
+        const plan = res.data;
+        await this.setStateAsync({
+          pricing: pricing,
+          plan: plan,
+          productName: plan.product,
         });
+        this.onUpdatePricing(pricing);
+      }
+      // load product
+      const res = await ProductBackend.getProduct(this.state.owner, this.state.productName);
+      if (res.status !== "ok") {
+        throw new Error(res.msg);
+      }
+      this.setState({
+        product: res.data,
       });
+    } catch (err) {
+      Setting.showMessage("error", err.message);
+      return;
+    }
   }
 
   getProductObj() {
@@ -68,49 +123,75 @@ class ProductBuyPage extends React.Component {
       return "$";
     } else if (product?.currency === "CNY") {
       return "￥";
-    } else {
-      return "(Unknown currency)";
-    }
-  }
-
-  getCurrencyText(product) {
-    if (product?.currency === "USD") {
-      return i18next.t("product:USD");
-    } else if (product?.currency === "CNY") {
-      return i18next.t("product:CNY");
+    } else if (product?.currency === "EUR") {
+      return "€";
+    } else if (product?.currency === "JPY") {
+      return "¥";
+    } else if (product?.currency === "GBP") {
+      return "£";
+    } else if (product?.currency === "AUD") {
+      return "A$";
+    } else if (product?.currency === "CAD") {
+      return "C$";
+    } else if (product?.currency === "CHF") {
+      return "CHF";
+    } else if (product?.currency === "HKD") {
+      return "HK$";
+    } else if (product?.currency === "SGD") {
+      return "S$";
     } else {
       return "(Unknown currency)";
     }
   }
 
   getPrice(product) {
-    return `${this.getCurrencySymbol(product)}${product?.price} (${this.getCurrencyText(product)})`;
+    return `${this.getCurrencySymbol(product)}${product?.price} (${Setting.getCurrencyText(product)})`;
   }
 
-  getProviders(product) {
-    if (this.state.providers.length === 0 || product.providers.length === 0) {
-      return [];
-    }
-
-    let providerMap = {};
-    this.state.providers.forEach(provider => {
-      providerMap[provider.name] = provider;
-    })
-
-    return product.providers.map(providerName => providerMap[providerName]);
+  // Call Weechat Pay via jsapi
+  onBridgeReady(attachInfo) {
+    const {WeixinJSBridge} = window;
+    // Setting.showMessage("success", "attachInfo is " + JSON.stringify(attachInfo));
+    this.setState({
+      isPlacingOrder: false,
+    });
+    WeixinJSBridge.invoke(
+      "getBrandWCPayRequest", {
+        "appId": attachInfo.appId,
+        "timeStamp": attachInfo.timeStamp,
+        "nonceStr": attachInfo.nonceStr,
+        "package": attachInfo.package,
+        "signType": attachInfo.signType,
+        "paySign": attachInfo.paySign,
+      },
+      function(res) {
+        if (res.err_msg === "get_brand_wcpay_request:ok") {
+          Setting.goToLink(attachInfo.payment.successUrl);
+          return ;
+        } else {
+          if (res.err_msg === "get_brand_wcpay_request:cancel") {
+            Setting.showMessage("error", i18next.t("product:Payment cancelled"));
+          } else {
+            Setting.showMessage("error", i18next.t("product:Payment failed"));
+          }
+        }
+      }
+    );
   }
 
-  getPayUrl(product, provider) {
-    if (product === null || provider === null) {
-      return "";
+  // In Wechat browser, call this function to pay via jsapi
+  callWechatPay(attachInfo) {
+    const {WeixinJSBridge} = window;
+    if (typeof WeixinJSBridge === "undefined") {
+      if (document.addEventListener) {
+        document.addEventListener("WeixinJSBridgeReady", () => this.onBridgeReady(attachInfo), false);
+      } else if (document.attachEvent) {
+        document.attachEvent("WeixinJSBridgeReady", () => this.onBridgeReady(attachInfo));
+        document.attachEvent("onWeixinJSBridgeReady", () => this.onBridgeReady(attachInfo));
+      }
+    } else {
+      this.onBridgeReady(attachInfo);
     }
-
-    return `https://${provider.type}`;
-    // if (provider.type === "WeChat") {
-    //   return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code&state=${state}`;
-    // } else if (provider.type === "GitHub") {
-    //   return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code&state=${state}`;
-    // }
   }
 
   buyProduct(product, provider) {
@@ -118,43 +199,58 @@ class ProductBuyPage extends React.Component {
       isPlacingOrder: true,
     });
 
-    ProductBackend.buyProduct(this.state.product.owner, this.state.productName, provider.name)
+    ProductBackend.buyProduct(product.owner, product.name, provider.name, this.state.pricingName ?? "", this.state.planName ?? "", this.state.userName ?? "", this.state.paymentEnv, this.state.customPrice)
       .then((res) => {
-        if (res.msg === "") {
-          const payUrl = res.data;
+        if (res.status === "ok") {
+          const payment = res.data;
+          const attachInfo = res.data2;
+          let payUrl = payment.payUrl;
+          if (provider.type === "WeChat Pay") {
+            if (this.state.paymentEnv === "WechatBrowser") {
+              attachInfo.payment = payment;
+              this.callWechatPay(attachInfo);
+              return ;
+            }
+            payUrl = `/qrcode/${payment.owner}/${payment.name}?providerName=${provider.name}&payUrl=${encodeURI(payment.payUrl)}&successUrl=${encodeURI(payment.successUrl)}`;
+          }
           Setting.goToLink(payUrl);
         } else {
-          Setting.showMessage("error", res.msg);
-
+          Setting.showMessage("error", `${i18next.t("general:Failed to save")}: ${res.msg}`);
           this.setState({
             isPlacingOrder: false,
           });
         }
       })
       .catch(error => {
-        Setting.showMessage("error", `Failed to connect to server: ${error}`);
+        Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
       });
   }
 
   getPayButton(provider) {
     let text = provider.type;
-    if (provider.type === "Alipay") {
+    if (provider.type === "Dummy") {
+      text = i18next.t("product:Dummy");
+    } else if (provider.type === "Alipay") {
       text = i18next.t("product:Alipay");
     } else if (provider.type === "WeChat Pay") {
       text = i18next.t("product:WeChat Pay");
-    } else if (provider.type === "Paypal") {
-      text = i18next.t("product:Paypal");
+    } else if (provider.type === "PayPal") {
+      text = i18next.t("product:PayPal");
+    } else if (provider.type === "Stripe") {
+      text = i18next.t("product:Stripe");
+    } else if (provider.type === "AirWallex") {
+      text = i18next.t("product:AirWallex");
     }
 
     return (
       <Button style={{height: "50px", borderWidth: "2px"}} shape="round" icon={
-        <img style={{marginRight: "10px"}} width={36} height={36} src={Provider.getProviderLogo(provider)} alt={provider.displayName} />
+        <img style={{marginRight: "10px"}} width={36} height={36} src={Setting.getProviderLogoURL(provider)} alt={provider.displayName} />
       } size={"large"} >
         {
           text
         }
       </Button>
-    )
+    );
   }
 
   renderProviderButton(provider, product) {
@@ -166,7 +262,7 @@ class ProductBuyPage extends React.Component {
           }
         </span>
       </span>
-    )
+    );
   }
 
   renderPay(product) {
@@ -177,14 +273,13 @@ class ProductBuyPage extends React.Component {
     if (product.state !== "Published") {
       return i18next.t("product:This product is currently not in sale.");
     }
-    if (product.providers.length === 0) {
+    if (product.providerObjs.length === 0) {
       return i18next.t("product:There is no payment channel for this product.");
     }
 
-    const providers = this.getProviders(product);
-    return providers.map(provider => {
+    return product.providerObjs.map(provider => {
       return this.renderProviderButton(provider, product);
-    })
+    });
   }
 
   render() {
@@ -195,29 +290,41 @@ class ProductBuyPage extends React.Component {
     }
 
     return (
-      <div>
+      <div className="login-content">
         <Spin spinning={this.state.isPlacingOrder} size="large" tip={i18next.t("product:Placing order...")} style={{paddingTop: "10%"}} >
-          <Descriptions title={i18next.t("product:Buy Product")} bordered>
+          <Descriptions title={<span style={Setting.isMobile() ? {fontSize: 20} : {fontSize: 28}}>{i18next.t("product:Buy Product")}</span>} bordered>
             <Descriptions.Item label={i18next.t("general:Name")} span={3}>
-            <span style={{fontSize: 28}}>
-              {product?.displayName}
-            </span>
+              <span style={{fontSize: 25}}>
+                {Setting.getLanguageText(product?.displayName)}
+              </span>
             </Descriptions.Item>
-            <Descriptions.Item label={i18next.t("product:Detail")}><span style={{fontSize: 16}}>{product?.detail}</span></Descriptions.Item>
-            <Descriptions.Item label={i18next.t("product:Tag")}><span style={{fontSize: 16}}>{product?.tag}</span></Descriptions.Item>
+            <Descriptions.Item label={i18next.t("product:Detail")}><span style={{fontSize: 16}}>{Setting.getLanguageText(product?.detail)}</span></Descriptions.Item>
+            <Descriptions.Item label={i18next.t("user:Tag")}><span style={{fontSize: 16}}>{product?.tag}</span></Descriptions.Item>
             <Descriptions.Item label={i18next.t("product:SKU")}><span style={{fontSize: 16}}>{product?.name}</span></Descriptions.Item>
             <Descriptions.Item label={i18next.t("product:Image")} span={3}>
-              <img src={product?.image} alt={product?.image} height={90} style={{marginBottom: '20px'}}/>
+              <img src={product?.image} alt={product?.name} height={90} style={{marginBottom: "20px"}} />
             </Descriptions.Item>
-            <Descriptions.Item label={i18next.t("product:Price")}>
-            <span style={{fontSize: 28, color: "red", fontWeight: "bold"}}>
-              {
-                this.getPrice(product)
-              }
-            </span>
-            </Descriptions.Item>
-            <Descriptions.Item label={i18next.t("product:Quantity")}><span style={{fontSize: 16}}>{product?.quantity}</span></Descriptions.Item>
-            <Descriptions.Item label={i18next.t("product:Sold")}><span style={{fontSize: 16}}>{product?.sold}</span></Descriptions.Item>
+            {
+              product.isRecharge ? (
+                <Descriptions.Item span={3} label={i18next.t("product:Price")}>
+                  <Space>
+                    <InputNumber min={0} value={this.state.customPrice} onChange={(e) => {this.setState({customPrice: e});}} /> {Setting.getCurrencyText(product)}
+                  </Space>
+                </Descriptions.Item>
+              ) : (
+                <React.Fragment>
+                  <Descriptions.Item label={i18next.t("product:Price")}>
+                    <span style={{fontSize: 28, color: "red", fontWeight: "bold"}}>
+                      {
+                        this.getPrice(product)
+                      }
+                    </span>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={i18next.t("product:Quantity")}><span style={{fontSize: 16}}>{product?.quantity}</span></Descriptions.Item>
+                  <Descriptions.Item label={i18next.t("product:Sold")}><span style={{fontSize: 16}}>{product?.sold}</span></Descriptions.Item>
+                </React.Fragment>
+              )
+            }
             <Descriptions.Item label={i18next.t("product:Pay")} span={3}>
               {
                 this.renderPay(product)
@@ -226,7 +333,7 @@ class ProductBuyPage extends React.Component {
           </Descriptions>
         </Spin>
       </div>
-    )
+    );
   }
 }
 
