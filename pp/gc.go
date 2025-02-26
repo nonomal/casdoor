@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,11 +37,14 @@ type GcPayReqInfo struct {
 	OrderDate string `json:"orderdate"`
 	OrderNo   string `json:"orderno"`
 	Amount    string `json:"amount"`
-	PayerId   string `json:"payerid"`
-	PayerName string `json:"payername"`
 	Xmpch     string `json:"xmpch"`
+	Body      string `json:"body"`
 	ReturnUrl string `json:"return_url"`
 	NotifyUrl string `json:"notify_url"`
+	PayerId   string `json:"payerid"`
+	PayerName string `json:"payername"`
+	Remark1   string `json:"remark1"`
+	Remark2   string `json:"remark2"`
 }
 
 type GcPayRespInfo struct {
@@ -87,6 +89,27 @@ type GcResponseBody struct {
 	Sign       string `json:"sign"`
 }
 
+type GcInvoiceReqInfo struct {
+	BusNo        string `json:"busno"`
+	PayerName    string `json:"payername"`
+	IdNum        string `json:"idnum"`
+	PayerType    string `json:"payertype"`
+	InvoiceTitle string `json:"invoicetitle"`
+	Tin          string `json:"tin"`
+	Phone        string `json:"phone"`
+	Email        string `json:"email"`
+}
+
+type GcInvoiceRespInfo struct {
+	BusNo     string `json:"busno"`
+	State     string `json:"state"`
+	EbillCode string `json:"ebillcode"`
+	EbillNo   string `json:"ebillno"`
+	CheckCode string `json:"checkcode"`
+	Url       string `json:"url"`
+	Content   string `json:"content"`
+}
+
 func NewGcPaymentProvider(clientId string, clientSecret string, host string) *GcPaymentProvider {
 	pp := &GcPaymentProvider{}
 
@@ -123,32 +146,149 @@ func (pp *GcPaymentProvider) doPost(postBytes []byte) ([]byte, error) {
 		}
 	}(resp.Body)
 
-	respBytes, err := ioutil.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	return respBytes, nil
 }
 
-func (pp *GcPaymentProvider) Pay(providerName string, productName string, paymentName string, productDisplayName string, price float64, returnUrl string, notifyUrl string) (string, error) {
+func (pp *GcPaymentProvider) Pay(r *PayReq) (*PayResp, error) {
 	payReqInfo := GcPayReqInfo{
 		OrderDate: util.GenerateSimpleTimeId(),
-		OrderNo:   util.GenerateTimeId(),
-		Amount:    getPriceString(price),
-		PayerId:   "",
-		PayerName: "",
+		OrderNo:   r.PaymentName,
+		Amount:    getPriceString(r.Price),
 		Xmpch:     pp.Xmpch,
-		ReturnUrl: returnUrl,
-		NotifyUrl: notifyUrl,
+		Body:      r.ProductDisplayName,
+		ReturnUrl: r.ReturnUrl,
+		NotifyUrl: r.NotifyUrl,
+		Remark1:   r.PayerName,
+		Remark2:   r.ProductName,
 	}
 
 	b, err := json.Marshal(payReqInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	body := GcRequestBody{
+		Op:          "OrderCreate",
+		Xmpch:       pp.Xmpch,
+		Version:     "1.4",
+		Data:        base64.StdEncoding.EncodeToString(b),
+		RequestTime: util.GenerateSimpleTimeId(),
+	}
+
+	params := fmt.Sprintf("data=%s&op=%s&requesttime=%s&version=%s&xmpch=%s%s", body.Data, body.Op, body.RequestTime, body.Version, body.Xmpch, pp.SecretKey)
+	body.Sign = strings.ToUpper(util.GetMd5Hash(params))
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	respBytes, err := pp.doPost(bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	var respBody GcResponseBody
+	err = json.Unmarshal(respBytes, &respBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if respBody.ReturnCode != "SUCCESS" {
+		return nil, fmt.Errorf("%s: %s", respBody.ReturnCode, respBody.ReturnMsg)
+	}
+
+	payRespInfoBytes, err := base64.StdEncoding.DecodeString(respBody.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var payRespInfo GcPayRespInfo
+	err = json.Unmarshal(payRespInfoBytes, &payRespInfo)
+	if err != nil {
+		return nil, err
+	}
+	payResp := &PayResp{
+		PayUrl: payRespInfo.PayUrl,
+	}
+	return payResp, nil
+}
+
+func (pp *GcPaymentProvider) Notify(body []byte, orderId string) (*NotifyResult, error) {
+	reqBody := GcRequestBody{}
+	m, err := url.ParseQuery(string(body))
+	if err != nil {
+		return nil, err
+	}
+
+	reqBody.Op = m["op"][0]
+	reqBody.Xmpch = m["xmpch"][0]
+	reqBody.Version = m["version"][0]
+	reqBody.Data = m["data"][0]
+	reqBody.RequestTime = m["requesttime"][0]
+	reqBody.Sign = m["sign"][0]
+
+	notifyReqInfoBytes, err := base64.StdEncoding.DecodeString(reqBody.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var notifyRespInfo GcNotifyRespInfo
+	err = json.Unmarshal(notifyReqInfoBytes, &notifyRespInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	providerName := ""
+	productName := ""
+
+	productDisplayName := ""
+	paymentName := notifyRespInfo.OrderNo
+	price := notifyRespInfo.Amount
+
+	if notifyRespInfo.OrderState != "1" {
+		return nil, fmt.Errorf("error order state: %s", notifyRespInfo.OrderDate)
+	}
+	notifyResult := &NotifyResult{
+		ProductName:        productName,
+		ProductDisplayName: productDisplayName,
+		ProviderName:       providerName,
+		OrderId:            orderId,
+		Price:              price,
+		PaymentStatus:      PaymentStatePaid,
+		PaymentName:        paymentName,
+	}
+	return notifyResult, nil
+}
+
+func (pp *GcPaymentProvider) GetInvoice(paymentName string, personName string, personIdCard string, personEmail string, personPhone string, invoiceType string, invoiceTitle string, invoiceTaxId string) (string, error) {
+	payerType := "0"
+	if invoiceType == "Organization" {
+		payerType = "1"
+	}
+
+	invoiceReqInfo := GcInvoiceReqInfo{
+		BusNo:        paymentName,
+		PayerName:    personName,
+		IdNum:        personIdCard,
+		PayerType:    payerType,
+		InvoiceTitle: invoiceTitle,
+		Tin:          invoiceTaxId,
+		Phone:        personPhone,
+		Email:        personEmail,
+	}
+
+	b, err := json.Marshal(invoiceReqInfo)
 	if err != nil {
 		return "", err
 	}
 
 	body := GcRequestBody{
-		Op:          "OrderCreate",
+		Op:          "InvoiceEBillByOrder",
 		Xmpch:       pp.Xmpch,
 		Version:     "1.4",
 		Data:        base64.StdEncoding.EncodeToString(b),
@@ -178,55 +318,32 @@ func (pp *GcPaymentProvider) Pay(providerName string, productName string, paymen
 		return "", fmt.Errorf("%s: %s", respBody.ReturnCode, respBody.ReturnMsg)
 	}
 
-	payRespInfoBytes, err := base64.StdEncoding.DecodeString(respBody.Data)
+	invoiceRespInfoBytes, err := base64.StdEncoding.DecodeString(respBody.Data)
 	if err != nil {
 		return "", err
 	}
 
-	var payRespInfo GcPayRespInfo
-	err = json.Unmarshal(payRespInfoBytes, &payRespInfo)
+	var invoiceRespInfo GcInvoiceRespInfo
+	err = json.Unmarshal(invoiceRespInfoBytes, &invoiceRespInfo)
 	if err != nil {
 		return "", err
 	}
 
-	return payRespInfo.PayUrl, nil
+	if invoiceRespInfo.State == "0" {
+		return "", fmt.Errorf("申请成功，开票中")
+	}
+
+	if invoiceRespInfo.Url == "" {
+		return "", fmt.Errorf("invoice URL is empty")
+	}
+
+	return invoiceRespInfo.Url, nil
 }
 
-func (pp *GcPaymentProvider) Notify(request *http.Request, body []byte, authorityPublicKey string) (string, string, float64, string, string, error) {
-	reqBody := GcRequestBody{}
-	m, err := url.ParseQuery(string(body))
-	if err != nil {
-		return "", "", 0, "", "", err
+func (pp *GcPaymentProvider) GetResponseError(err error) string {
+	if err == nil {
+		return "success"
+	} else {
+		return "fail"
 	}
-
-	reqBody.Op = m["op"][0]
-	reqBody.Xmpch = m["xmpch"][0]
-	reqBody.Version = m["version"][0]
-	reqBody.Data = m["data"][0]
-	reqBody.RequestTime = m["requesttime"][0]
-	reqBody.Sign = m["sign"][0]
-
-	notifyReqInfoBytes, err := base64.StdEncoding.DecodeString(reqBody.Data)
-	if err != nil {
-		return "", "", 0, "", "", err
-	}
-
-	var notifyRespInfo GcNotifyRespInfo
-	err = json.Unmarshal(notifyReqInfoBytes, &notifyRespInfo)
-	if err != nil {
-		return "", "", 0, "", "", err
-	}
-
-	providerName := ""
-	productName := ""
-
-	productDisplayName := ""
-	paymentName := notifyRespInfo.OrderNo
-	price := notifyRespInfo.Amount
-
-	if notifyRespInfo.OrderState != "1" {
-		return "", "", 0, "", "", fmt.Errorf("error order state: %s", notifyRespInfo.OrderDate)
-	}
-
-	return productDisplayName, paymentName, price, productName, providerName, nil
 }
