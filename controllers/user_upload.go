@@ -19,22 +19,24 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"path/filepath"
 
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
 
-func saveFile(path string, file *multipart.File) {
-	f, err := os.Create(path)
+func saveFile(path string, file *multipart.File) (err error) {
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer f.Close()
 
 	_, err = io.Copy(f, *file)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func (c *ApiController) UploadUsers() {
@@ -43,18 +45,28 @@ func (c *ApiController) UploadUsers() {
 
 	file, header, err := c.Ctx.Request.FormFile("file")
 	if err != nil {
-		panic(err)
+		c.ResponseError(err.Error())
+		return
 	}
+
 	fileId := fmt.Sprintf("%s_%s_%s", owner, user, util.RemoveExt(header.Filename))
-
 	path := util.GetUploadXlsxPath(fileId)
-	util.EnsureFileFolderExists(path)
-	saveFile(path, &file)
+	defer os.Remove(path)
+	err = saveFile(path, &file)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
 
-	affected := object.UploadUsers(owner, fileId)
+	affected, err := object.UploadUsers(owner, path)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	if affected {
 		c.ResponseOk()
 	} else {
-		c.ResponseError("Failed to import users")
+		c.ResponseError(c.T("user_upload:Failed to import users"))
 	}
 }
