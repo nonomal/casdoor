@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React from 'react';
+import React from "react";
 import LoginPage from "./LoginPage";
 import {authConfig} from "./Auth";
 
 class SelfLoginPage extends React.Component {
+  constructor(props) {
+    super(props);
+    import("../ManagementPage");
+  }
   render() {
     return (
-      <LoginPage type={"login"} mode={"signin"} applicationName={authConfig.appName} account={this.props.account} {...this.props} />
-    )
+      <LoginPage type={"login"} mode={"signin"} applicationName={authConfig.appName} {...this.props} />
+    );
   }
 }
 

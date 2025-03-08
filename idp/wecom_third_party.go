@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
@@ -46,11 +45,11 @@ func (idp *WeComIdProvider) SetHttpClient(client *http.Client) {
 
 // getConfig return a point of Config, which describes a typical 3-legged OAuth2 flow
 func (idp *WeComIdProvider) getConfig(clientId string, clientSecret string, redirectUrl string) *oauth2.Config {
-	var endpoint = oauth2.Endpoint{
+	endpoint := oauth2.Endpoint{
 		TokenURL: "https://graph.qq.com/oauth2.0/token",
 	}
 
-	var config = &oauth2.Config{
+	config := &oauth2.Config{
 		Scopes:       []string{"snsapi_login"},
 		Endpoint:     endpoint,
 		ClientID:     clientId,
@@ -76,7 +75,9 @@ func (idp *WeComIdProvider) GetToken(code string) (*oauth2.Token, error) {
 		ProviderSecret string `json:"provider_secret"`
 	}{idp.Config.ClientID, idp.Config.ClientSecret}
 	data, err := idp.postWithBody(pTokenParams, "https://qyapi.weixin.qq.com/cgi-bin/service/get_provider_token")
-
+	if err != nil {
+		return nil, err
+	}
 	pToken := &WeComProviderToken{}
 	err = json.Unmarshal(data, pToken)
 	if err != nil {
@@ -195,7 +196,7 @@ func (idp *WeComIdProvider) postWithBody(body interface{}, url string) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}

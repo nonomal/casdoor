@@ -32,14 +32,16 @@ func getMd5HexDigest(s string) string {
 	return res
 }
 
-func NewMd5UserSaltCredManager() *Sha256SaltCredManager {
-	cm := &Sha256SaltCredManager{}
+func NewMd5UserSaltCredManager() *Md5UserSaltCredManager {
+	cm := &Md5UserSaltCredManager{}
 	return cm
 }
 
 func (cm *Md5UserSaltCredManager) GetHashedPassword(password string, userSalt string, organizationSalt string) string {
-	hash := getMd5HexDigest(password)
-	res := getMd5HexDigest(hash + userSalt)
+	res := getMd5HexDigest(password)
+	if userSalt != "" {
+		res = getMd5HexDigest(res + userSalt)
+	}
 	return res
 }
 

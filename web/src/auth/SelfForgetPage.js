@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import React from "react";
-import { authConfig } from "./Auth";
+import {authConfig} from "./Auth";
 import ForgetPage from "./ForgetPage";
 
 class SelfForgetPage extends React.Component {
@@ -22,7 +22,6 @@ class SelfForgetPage extends React.Component {
       <ForgetPage
         type={"forgotPassword"}
         applicationName={authConfig.appName}
-        account={this.props.account}
         {...this.props}
       />
     );

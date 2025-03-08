@@ -16,16 +16,32 @@
 
 package object
 
-import "github.com/go-gomail/gomail"
+import "github.com/casdoor/casdoor/email"
+
+// TestSmtpServer Test the SMTP server
+func TestSmtpServer(provider *Provider) error {
+	smtpEmailProvider := email.NewSmtpEmailProvider(provider.ClientId, provider.ClientSecret, provider.Host, provider.Port, provider.Type, provider.DisableSsl)
+	sender, err := smtpEmailProvider.Dialer.Dial()
+	if err != nil {
+		return err
+	}
+	defer sender.Close()
+
+	return nil
+}
 
 func SendEmail(provider *Provider, title string, content string, dest string, sender string) error {
-	dialer := gomail.NewDialer(provider.Host, provider.Port, provider.ClientId, provider.ClientSecret)
+	emailProvider := email.GetEmailProvider(provider.Type, provider.ClientId, provider.ClientSecret, provider.Host, provider.Port, provider.DisableSsl, provider.Endpoint, provider.Method)
 
-	message := gomail.NewMessage()
-	message.SetAddressHeader("From", provider.ClientId, sender)
-	message.SetHeader("To", dest)
-	message.SetHeader("Subject", title)
-	message.SetBody("text/html", content)
+	fromAddress := provider.ClientId2
+	if fromAddress == "" {
+		fromAddress = provider.ClientId
+	}
 
-	return dialer.DialAndSend(message)
+	fromName := provider.ClientSecret2
+	if fromName == "" {
+		fromName = sender
+	}
+
+	return emailProvider.Send(fromAddress, fromName, dest, title, content)
 }

@@ -14,18 +14,62 @@
 
 package pp
 
-import "net/http"
+type PaymentState string
 
-type PaymentProvider interface {
-	Pay(providerName string, productName string, paymentName string, productDisplayName string, price float64, returnUrl string, notifyUrl string) (string, error)
-	Notify(request *http.Request, body []byte, authorityPublicKey string) (string, string, float64, string, string, error)
+const (
+	PaymentStatePaid     PaymentState = "Paid"
+	PaymentStateCreated  PaymentState = "Created"
+	PaymentStateCanceled PaymentState = "Canceled"
+	PaymentStateTimeout  PaymentState = "Timeout"
+	PaymentStateError    PaymentState = "Error"
+)
+
+const (
+	PaymentEnvWechatBrowser = "WechatBrowser"
+)
+
+type PayReq struct {
+	ProviderName       string
+	ProductName        string
+	PayerName          string
+	PayerId            string
+	PayerEmail         string
+	PaymentName        string
+	ProductDisplayName string
+	ProductDescription string
+	ProductImage       string
+	Price              float64
+	Currency           string
+
+	ReturnUrl string
+	NotifyUrl string
+
+	PaymentEnv string
 }
 
-func GetPaymentProvider(typ string, appId string, clientSecret string, host string, appPublicKey string, appPrivateKey string, authorityPublicKey string, authorityRootPublicKey string) PaymentProvider {
-	if typ == "Alipay" {
-		return NewAlipayPaymentProvider(appId, appPublicKey, appPrivateKey, authorityPublicKey, authorityRootPublicKey)
-	} else if typ == "GC" {
-		return NewGcPaymentProvider(appId, clientSecret, host)
-	}
-	return nil
+type PayResp struct {
+	PayUrl     string
+	OrderId    string
+	AttachInfo map[string]interface{}
+}
+
+type NotifyResult struct {
+	PaymentName   string
+	PaymentStatus PaymentState
+	NotifyMessage string
+
+	ProductName        string
+	ProductDisplayName string
+	ProviderName       string
+	Price              float64
+	Currency           string
+
+	OrderId string
+}
+
+type PaymentProvider interface {
+	Pay(req *PayReq) (*PayResp, error)
+	Notify(body []byte, orderId string) (*NotifyResult, error)
+	GetInvoice(paymentName string, personName string, personIdCard string, personEmail string, personPhone string, invoiceType string, invoiceTitle string, invoiceTaxId string) (string, error)
+	GetResponseError(err error) string
 }
